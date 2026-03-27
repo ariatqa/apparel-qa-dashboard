@@ -937,12 +937,63 @@ let isAdmin = false;
 let editId = null;
 let editCommentIdx = null;
 
+// ── GOOGLE SHEETS CONFIG ───────────────────
+// Paste your deployed Apps Script Web App URL here after setup
+const SHEETS_URL = 'https://script.google.com/macros/s/AKfycbxkzi4GjsALRPzTqJTdLBTrwnfAofHsFl8ZREIBy4uTBsCnLYBqSwgeSvOHiKPBgTXv/exec';
+const SHEETS_ENABLED = SHEETS_URL !== 'YOUR_APPS_SCRIPT_URL_HERE';
+
+// Generic API call helpers
+async function sheetsGet(action) {
+  if (!SHEETS_ENABLED) return null;
+  try {
+    const res = await fetch(`${SHEETS_URL}?action=${action}`);
+    const json = await res.json();
+    return json.error ? null : json;
+  } catch(e) { console.warn('Sheets GET failed:', e); return null; }
+}
+
+async function sheetsPost(body) {
+  if (!SHEETS_ENABLED) return null;
+  try {
+    const res = await fetch(SHEETS_URL, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    const json = await res.json();
+    if (json.error) console.warn('Sheets POST error:', json.error);
+    return json;
+  } catch(e) { console.warn('Sheets POST failed:', e); return null; }
+}
+
+// Show/hide a subtle sync indicator in the header
+function showSyncStatus(msg, isError) {
+  let el = document.getElementById('sync-status');
+  if (!el) {
+    el = document.createElement('span');
+    el.id = 'sync-status';
+    el.style.cssText = 'font-size:11px;padding:3px 10px;border-radius:3px;font-family:var(--font-m);transition:opacity .3s;';
+    document.querySelector('.header-right').insertBefore(el, document.getElementById('admin-badge'));
+  }
+  el.textContent = msg;
+  el.style.background  = isError ? 'rgba(192,40,28,.25)' : 'rgba(45,122,79,.25)';
+  el.style.color       = isError ? '#f5a09a' : '#6ddba4';
+  el.style.opacity     = '1';
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.style.opacity = '0'; }, 3000);
+}
+
 /* ── INIT ─────────────────────────────────── */
-document.addEventListener('DOMContentLoaded', () => {
-  renderKpiTable();
-  renderDetailCards();
-  renderInsights();
-  renderComments();
+document.addEventListener('DOMContentLoaded', async () => {
+  // Load from Google Sheets if configured, otherwise use local data
+  if (SHEETS_ENABLED) {
+    await loadFromSheets();
+  } else {
+    // Show a subtle indicator that Sheets is not connected
+    renderKpiTable();
+    renderDetailCards();
+    renderInsights();
+    renderComments();
+  }
   buildYearButtons();
   document.querySelectorAll('.yr-chip').forEach(c =>
     c.addEventListener('click', () => { c.classList.toggle('on'); applyYrFilter(); }));
@@ -950,6 +1001,54 @@ document.addEventListener('DOMContentLoaded', () => {
     o.addEventListener('click', e => { if (e.target === o) closeM(o.id); }));
   document.querySelectorAll('.upload-zone').forEach(setupDrop);
 });
+
+async function loadFromSheets() {
+  showSyncStatus('Loading…');
+  const data = await sheetsGet('getAll');
+  if (!data) {
+    // Sheets not reachable — fall back to local data
+    showSyncStatus('Using local data (Sheets unavailable)', true);
+    renderKpiTable(); renderDetailCards(); renderInsights(); renderComments();
+    return;
+  }
+
+  // Merge KPI data from Sheets into KPIS array
+  if (data.kpis && data.kpis.length) {
+    data.kpis.forEach(sheetKpi => {
+      const local = KPIS.find(k => k.id === sheetKpi.id);
+      if (local) {
+        // Merge year values and notes
+        if (sheetKpi.v)     Object.assign(local.v, sheetKpi.v);
+        if (sheetKpi.notes) Object.assign(local.notes, sheetKpi.notes);
+        if (sheetKpi.label && sheetKpi.label !== '') local.label = sheetKpi.label;
+        if (sheetKpi.def   && sheetKpi.def   !== '') local.def   = sheetKpi.def;
+      }
+    });
+  }
+
+  // Replace comments with Sheets data
+  if (data.comments && data.comments.length) {
+    COMMENTS.length = 0;
+    data.comments.forEach(c => COMMENTS.push({
+      id:     c.id,
+      author: c.author,
+      dept:   c.dept,
+      date:   c.date,
+      text:   c.text,
+    }));
+  }
+
+  // Replace insights with Sheets data
+  if (data.insights && Object.keys(data.insights).length) {
+    Object.assign(INSIGHTS, data.insights);
+  }
+
+  renderKpiTable();
+  renderDetailCards();
+  renderInsights();
+  renderComments();
+  showSyncStatus('Synced ✓');
+}
 
 /* ── NAVIGATION ───────────────────────────── */
 function go(id, el) {
@@ -1187,7 +1286,8 @@ function saveNoteEdit(cell, kpiId, yr, newVal) {
   if (!kpi) return;
   if (!kpi.notes) kpi.notes = {};
   kpi.notes[yr] = newVal.trim();
-
+  sheetsPost({ action:'saveNote', id: kpiId, year: yr, note: newVal.trim() });
+  showSyncStatus('Note saved ✓');
   cell.classList.remove('editing');
   cell.innerHTML = newVal.trim()
     ? newVal.trim()
@@ -1226,25 +1326,31 @@ function showInsightAdminBtns() {
   document.querySelectorAll('.insight-admin-btns').forEach(el => el.style.display = 'flex');
 }
 
-function editInsight(yr, i) {
+async function editInsight(yr, i) {
   const current = INSIGHTS[yr][i];
   const val = prompt('Edit insight:', current);
   if (val === null || val.trim() === '') return;
   INSIGHTS[yr][i] = val.trim();
   renderInsights();
+  await sheetsPost({ action:'editInsight', year: yr, index: i, text: val.trim() });
+  showSyncStatus('Insight updated ✓');
 }
 
-function deleteInsight(yr, i) {
+async function deleteInsight(yr, i) {
   if (!confirm('Delete this insight?')) return;
   INSIGHTS[yr].splice(i, 1);
   renderInsights();
+  await sheetsPost({ action:'deleteInsight', year: yr, index: i });
+  showSyncStatus('Insight deleted ✓');
 }
 
-function addInsight(yr) {
+async function addInsight(yr) {
   const val = prompt('New insight for ' + yr + ':');
   if (!val || !val.trim()) return;
   INSIGHTS[yr].push(val.trim());
   renderInsights();
+  await sheetsPost({ action:'addInsight', year: yr, text: val.trim() });
+  showSyncStatus('Insight added ✓');
 }
 
 /* ── COMMENTS ─────────────────────────────── */
@@ -1290,31 +1396,45 @@ function openCommentEdit(i, c) {
   document.getElementById('m-comment').classList.add('open');
 }
 
-function saveCommentEdit() {
+async function saveCommentEdit() {
   const text = document.getElementById('ec-text').value.trim();
   if (!text) return;
-  COMMENTS[editCommentIdx].text   = text;
-  COMMENTS[editCommentIdx].author = document.getElementById('ec-author').value.trim() || COMMENTS[editCommentIdx].author;
-  COMMENTS[editCommentIdx].dept   = document.getElementById('ec-dept').value;
+  const c = COMMENTS[editCommentIdx];
+  c.text   = text;
+  c.author = document.getElementById('ec-author').value.trim() || c.author;
+  c.dept   = document.getElementById('ec-dept').value;
   renderComments();
   closeM('m-comment');
+  if (c.id) {
+    await sheetsPost({ action:'editComment', id: c.id, author: c.author, dept: c.dept, text: c.text });
+    showSyncStatus('Comment updated ✓');
+  }
 }
 
-function deleteComment(i) {
+async function deleteComment(i) {
   if (!confirm('Delete this comment?')) return;
+  const comment = COMMENTS[i];
   COMMENTS.splice(i, 1);
   renderComments();
+  if (comment && comment.id) {
+    await sheetsPost({ action:'deleteComment', id: comment.id });
+    showSyncStatus('Comment deleted ✓');
+  }
 }
 
-function postComment() {
+async function postComment() {
   const text = document.getElementById('c-text').value.trim();
   if (!text) return;
   const author = document.getElementById('c-author').value.trim() || 'Admin';
-  const dept = document.getElementById('c-dept').value;
-  const d = new Date();
-  COMMENTS.unshift({ author, dept, date: d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}), text });
+  const dept   = document.getElementById('c-dept').value;
+  const date   = new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+  const comment = { author, dept, date, text };
+  const res = await sheetsPost({ action:'addComment', ...comment });
+  if (res && res.id) comment.id = res.id;
+  COMMENTS.unshift(comment);
   renderComments();
   document.getElementById('c-text').value = '';
+  showSyncStatus('Comment posted ✓');
 }
 
 /* ── KPI EDIT ─────────────────────────────── */
@@ -1674,12 +1794,17 @@ function parseWorkbook(wb, filename) {
   </div>`;
 }
 
-function applyUploadedKPIs() {
+async function applyUploadedKPIs() {
   const yr      = selectedUploadYear;
   const label   = yrLabel(yr);
 
   // Ensure this year column exists across all KPIs and UI
   ensureYearExists(yr);
+
+  // Write all KPI values to Sheets in one call
+  const kpiMap = {};
+  Object.entries(pendingKPIs).forEach(([id, r]) => { kpiMap[id] = r.value; });
+  sheetsPost({ action:'applyUpload', year: yr, kpis: kpiMap });
 
   Object.entries(pendingKPIs).forEach(([id, r]) => {
     const k = KPIS.find(x => x.id === id);
