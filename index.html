@@ -973,9 +973,22 @@ async function sheetsGet(action) {
   });
 }
 
-async function sheetsPost(body) {
+async function sheetsPost(body, retries = 2) {
   if (!SHEETS_ENABLED) return null;
-  // Use JSONP GET — same approach as reads, which we know works
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const result = await _sheetsPostOnce(body);
+    if (result && result.ok) return result;
+    if (attempt < retries) {
+      console.warn(`Sheets write attempt ${attempt} failed, retrying...`);
+      await new Promise(r => setTimeout(r, 1000)); // wait 1s before retry
+    }
+  }
+  console.warn('Sheets write failed after', retries, 'attempts for action:', body.action);
+  return null;
+}
+
+function _sheetsPostOnce(body) {
   return new Promise((resolve) => {
     const cbName  = '_gscb_' + Date.now() + '_' + Math.random().toString(36).slice(2);
     const script  = document.createElement('script');
@@ -984,7 +997,7 @@ async function sheetsPost(body) {
       if (document.body.contains(script)) document.body.removeChild(script);
       console.warn('Sheets write timeout for action:', body.action);
       resolve(null);
-    }, 15000);
+    }, 20000); // 20 second timeout
 
     window[cbName] = (data) => {
       clearTimeout(timeout);
