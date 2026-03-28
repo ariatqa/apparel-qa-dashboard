@@ -963,7 +963,7 @@ async function sheetsGet(action) {
       resolve(data);
     };
 
-    script.src = `${SHEETS_URL}?action=${action}&callback=${cbName}`;
+    script.src = `${SHEETS_URL}?action=${action}&callback=${cbName}&_=${Date.now()}`;
     script.onerror = () => {
       clearTimeout(timeout);
       delete window[cbName];
@@ -1036,18 +1036,19 @@ async function loadFromSheets() {
     return;
   }
 
-  // Merge KPI data from Sheets into KPIS array
+  // Replace KPI data fully from Sheets — don't merge, fully overwrite year values
   if (data.kpis && data.kpis.length) {
     data.kpis.forEach(sheetKpi => {
       const local = KPIS.find(k => k.id === sheetKpi.id);
       if (local) {
-        // Merge year values and notes
-        if (sheetKpi.v)     Object.assign(local.v, sheetKpi.v);
-        if (sheetKpi.notes) Object.assign(local.notes, sheetKpi.notes);
+        // Fully replace v and notes with Sheet values
+        if (sheetKpi.v     && Object.keys(sheetKpi.v).length)     local.v     = sheetKpi.v;
+        if (sheetKpi.notes && Object.keys(sheetKpi.notes).length)  local.notes = sheetKpi.notes;
         if (sheetKpi.label && sheetKpi.label !== '') local.label = sheetKpi.label;
         if (sheetKpi.def   && sheetKpi.def   !== '') local.def   = sheetKpi.def;
       }
     });
+    console.log('Loaded from Sheets:', data.kpis.map(k => k.id + ':' + JSON.stringify(k.v)));
   }
 
   // Replace comments with Sheets data
