@@ -975,18 +975,38 @@ async function sheetsGet(action) {
 
 async function sheetsPost(body) {
   if (!SHEETS_ENABLED) return null;
-  try {
-    await fetch(SHEETS_URL, {
-      method:  'POST',
-      mode:    'no-cors',
-      headers: { 'Content-Type': 'text/plain' },
-      body:    JSON.stringify(body),
+  // Use JSONP GET — same approach as reads, which we know works
+  return new Promise((resolve) => {
+    const cbName  = '_gscb_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+    const script  = document.createElement('script');
+    const timeout = setTimeout(() => {
+      delete window[cbName];
+      if (document.body.contains(script)) document.body.removeChild(script);
+      console.warn('Sheets write timeout for action:', body.action);
+      resolve(null);
+    }, 15000);
+
+    window[cbName] = (data) => {
+      clearTimeout(timeout);
+      delete window[cbName];
+      if (document.body.contains(script)) document.body.removeChild(script);
+      resolve(data);
+    };
+
+    const params = new URLSearchParams({
+      payload:  JSON.stringify(body),
+      callback: cbName,
+      _:        Date.now(),
     });
-    return { ok: true };
-  } catch(e) {
-    console.warn('Sheets POST failed:', e);
-    return null;
-  }
+
+    script.src    = `${SHEETS_URL}?${params.toString()}`;
+    script.onerror = () => {
+      clearTimeout(timeout);
+      delete window[cbName];
+      resolve(null);
+    };
+    document.body.appendChild(script);
+  });
 }
 
 // Show/hide a subtle sync indicator in the header
