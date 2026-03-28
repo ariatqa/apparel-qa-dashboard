@@ -976,39 +976,16 @@ async function sheetsGet(action) {
 async function sheetsPost(body) {
   if (!SHEETS_ENABLED) return null;
   try {
-    // Apps Script requires a GET request with params for write operations
-    // when called cross-origin — encode body as URL params
+    // Use no-cors fetch for writes — can't read response but the save goes through
+    // Encode as URL params on a GET request since Apps Script handles both
     const params = new URLSearchParams({
-      action: body.action,
+      action:  body.action,
       payload: JSON.stringify(body),
     });
-    const url = `${SHEETS_URL}?${params.toString()}`;
-
-    return new Promise((resolve) => {
-      const cbName = '_gscb_' + Date.now();
-      const script  = document.createElement('script');
-      const timeout = setTimeout(() => {
-        delete window[cbName];
-        if (document.body.contains(script)) document.body.removeChild(script);
-        console.warn('Sheets POST timeout');
-        resolve(null);
-      }, 10000);
-
-      window[cbName] = (data) => {
-        clearTimeout(timeout);
-        delete window[cbName];
-        if (document.body.contains(script)) document.body.removeChild(script);
-        resolve(data);
-      };
-
-      script.src = url + `&callback=${cbName}`;
-      script.onerror = () => {
-        clearTimeout(timeout);
-        delete window[cbName];
-        resolve(null);
-      };
-      document.body.appendChild(script);
-    });
+    await fetch(`${SHEETS_URL}?${params.toString()}`, { mode: 'no-cors' });
+    // no-cors returns an opaque response — we can't check ok/error
+    // but if fetch didn't throw, the request was sent successfully
+    return { ok: true };
   } catch(e) {
     console.warn('Sheets POST failed:', e);
     return null;
@@ -1896,7 +1873,7 @@ async function applyUploadedKPIs() {
   const btn = document.getElementById('apply-btn');
   btn.textContent = `\u2713 Applied to ${label}`;
   btn.style.background = 'var(--jade)';
-  showSyncStatus(saveOk ? `Upload saved to Sheets \u2713` : 'Saved locally — Sheets unreachable', !saveOk);
+  showSyncStatus(saveOk ? `Upload sent to Sheets \u2713` : 'Saved locally — Sheets unreachable', !saveOk);
   pendingKPIs = {};
   setTimeout(() => {
     btn.textContent = `Apply to ${label} \u2192`;
