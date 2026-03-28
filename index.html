@@ -1851,14 +1851,13 @@ async function applyUploadedKPIs() {
   // Ensure this year column exists across all KPIs and UI
   ensureYearExists(yr);
 
-  // Build the map of id → value for every pending KPI
-  const kpiMap = {};
-  Object.entries(pendingKPIs).forEach(([id, r]) => { kpiMap[id] = r.value; });
-
-  // Save to Google Sheets — await so we know it worked before showing success
+  // Save to Google Sheets — one saveKPI call per KPI to avoid URL length limits
   showSyncStatus('Saving to Sheets\u2026');
-  const saveRes = await sheetsPost({ action: 'applyUpload', year: yr, kpis: kpiMap });
-  const saveOk  = saveRes && saveRes.ok;
+  let saveOk = true;
+  for (const [id, r] of Object.entries(pendingKPIs)) {
+    const res = await sheetsPost({ action: 'saveKPI', id, year: yr, value: r.value });
+    if (!res || !res.ok) { saveOk = false; }
+  }
 
   // Update local KPIS data and DOM cells
   Object.entries(pendingKPIs).forEach(([id, r]) => {
