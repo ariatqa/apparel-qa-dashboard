@@ -976,15 +976,12 @@ async function sheetsGet(action) {
 async function sheetsPost(body) {
   if (!SHEETS_ENABLED) return null;
   try {
-    // Use no-cors fetch for writes — can't read response but the save goes through
-    // Encode as URL params on a GET request since Apps Script handles both
-    const params = new URLSearchParams({
-      action:  body.action,
-      payload: JSON.stringify(body),
+    await fetch(SHEETS_URL, {
+      method:  'POST',
+      mode:    'no-cors',
+      headers: { 'Content-Type': 'text/plain' },
+      body:    JSON.stringify(body),
     });
-    await fetch(`${SHEETS_URL}?${params.toString()}`, { mode: 'no-cors' });
-    // no-cors returns an opaque response — we can't check ok/error
-    // but if fetch didn't throw, the request was sent successfully
     return { ok: true };
   } catch(e) {
     console.warn('Sheets POST failed:', e);
