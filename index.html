@@ -939,30 +939,80 @@ let editCommentIdx = null;
 
 // ── GOOGLE SHEETS CONFIG ───────────────────
 // Paste your deployed Apps Script Web App URL here after setup
-const SHEETS_URL = 'https://script.google.com/macros/s/AKfycbxzMtFA7avrZUfXjkQ6g-REtY6LOXDxI4C27V8SOubu8K05iJbWP_kYODLVecCpB5W9/exec';
+const SHEETS_URL = 'https://script.google.com/macros/s/AKfycbzRcAultY9LhHgIRWwkH9ev1pHuYthu9kjf3Yr8mFkm2YUqmSHrdoWXLi-qAQGcYac7/exec';
 const SHEETS_ENABLED = SHEETS_URL !== 'YOUR_APPS_SCRIPT_URL_HERE';
 
 // Generic API call helpers
 async function sheetsGet(action) {
   if (!SHEETS_ENABLED) return null;
-  try {
-    const res = await fetch(`${SHEETS_URL}?action=${action}`);
-    const json = await res.json();
-    return json.error ? null : json;
-  } catch(e) { console.warn('Sheets GET failed:', e); return null; }
+  return new Promise((resolve) => {
+    // Use JSONP-style callback to avoid CORS issues with Apps Script
+    const cbName = '_gscb_' + Date.now();
+    const script  = document.createElement('script');
+    const timeout = setTimeout(() => {
+      delete window[cbName];
+      document.body.removeChild(script);
+      console.warn('Sheets GET timeout');
+      resolve(null);
+    }, 10000);
+
+    window[cbName] = (data) => {
+      clearTimeout(timeout);
+      delete window[cbName];
+      document.body.removeChild(script);
+      resolve(data);
+    };
+
+    script.src = `${SHEETS_URL}?action=${action}&callback=${cbName}`;
+    script.onerror = () => {
+      clearTimeout(timeout);
+      delete window[cbName];
+      resolve(null);
+    };
+    document.body.appendChild(script);
+  });
 }
 
 async function sheetsPost(body) {
   if (!SHEETS_ENABLED) return null;
   try {
-    const res = await fetch(SHEETS_URL, {
-      method: 'POST',
-      body: JSON.stringify(body),
+    // Apps Script requires a GET request with params for write operations
+    // when called cross-origin — encode body as URL params
+    const params = new URLSearchParams({
+      action: body.action,
+      payload: JSON.stringify(body),
     });
-    const json = await res.json();
-    if (json.error) console.warn('Sheets POST error:', json.error);
-    return json;
-  } catch(e) { console.warn('Sheets POST failed:', e); return null; }
+    const url = `${SHEETS_URL}?${params.toString()}`;
+
+    return new Promise((resolve) => {
+      const cbName = '_gscb_' + Date.now();
+      const script  = document.createElement('script');
+      const timeout = setTimeout(() => {
+        delete window[cbName];
+        if (document.body.contains(script)) document.body.removeChild(script);
+        console.warn('Sheets POST timeout');
+        resolve(null);
+      }, 10000);
+
+      window[cbName] = (data) => {
+        clearTimeout(timeout);
+        delete window[cbName];
+        if (document.body.contains(script)) document.body.removeChild(script);
+        resolve(data);
+      };
+
+      script.src = url + `&callback=${cbName}`;
+      script.onerror = () => {
+        clearTimeout(timeout);
+        delete window[cbName];
+        resolve(null);
+      };
+      document.body.appendChild(script);
+    });
+  } catch(e) {
+    console.warn('Sheets POST failed:', e);
+    return null;
+  }
 }
 
 // Show/hide a subtle sync indicator in the header
