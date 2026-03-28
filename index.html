@@ -1795,17 +1795,22 @@ function parseWorkbook(wb, filename) {
 }
 
 async function applyUploadedKPIs() {
-  const yr      = selectedUploadYear;
-  const label   = yrLabel(yr);
+  const yr    = selectedUploadYear;
+  const label = yrLabel(yr);
 
   // Ensure this year column exists across all KPIs and UI
   ensureYearExists(yr);
 
-  // Write all KPI values to Sheets in one call
+  // Build the map of id → value for every pending KPI
   const kpiMap = {};
   Object.entries(pendingKPIs).forEach(([id, r]) => { kpiMap[id] = r.value; });
-  sheetsPost({ action:'applyUpload', year: yr, kpis: kpiMap });
 
+  // Save to Google Sheets — await so we know it worked before showing success
+  showSyncStatus('Saving to Sheets\u2026');
+  const saveRes = await sheetsPost({ action: 'applyUpload', year: yr, kpis: kpiMap });
+  const saveOk  = saveRes && saveRes.ok;
+
+  // Update local KPIS data and DOM cells
   Object.entries(pendingKPIs).forEach(([id, r]) => {
     const k = KPIS.find(x => x.id === id);
     if (!k) return;
@@ -1816,20 +1821,33 @@ async function applyUploadedKPIs() {
   renderKpiTable();
   renderDetailCards();
 
-  const recCount = Object.values(pendingKPIs).reduce((s,r) => s+r.rows, 0);
+  // Persist upload log entry to Sheets
+  const recCount = Object.values(pendingKPIs).reduce((s, r) => s + r.rows, 0);
+  const sheetsCount = Object.keys(pendingKPIs).length > 0 ? '5 sheets' : '\u2014';
+  await sheetsPost({
+    action:   'addUploadLog',
+    filename: 'workbook',
+    year:     label,
+    sheets:   sheetsCount,
+    records:  recCount,
+    status:   saveOk ? 'Applied' : 'Applied (local only)',
+  });
+
+  // Update upload history table in the UI
   const row = document.createElement('tr');
   row.innerHTML = `
     <td style="font-family:var(--font-m);font-size:11px">${new Date().toLocaleString()}</td>
     <td style="font-family:var(--font-m);font-size:11px">workbook</td>
     <td><span style="font-family:var(--font-m);font-weight:700">${label}</span></td>
-    <td>${Object.keys(pendingKPIs).length > 0 ? '5 sheets' : '\u2014'}</td>
+    <td>${sheetsCount}</td>
     <td style="font-family:var(--font-m)">${recCount.toLocaleString()}</td>
-    <td><span class="badge b-pass">Applied</span></td>`;
+    <td><span class="badge ${saveOk ? 'b-pass' : 'b-pend'}">${saveOk ? 'Applied' : 'Local only'}</span></td>`;
   document.getElementById('upload-log').insertBefore(row, document.getElementById('upload-log').firstChild);
 
   const btn = document.getElementById('apply-btn');
   btn.textContent = `\u2713 Applied to ${label}`;
   btn.style.background = 'var(--jade)';
+  showSyncStatus(saveOk ? `Upload saved to Sheets \u2713` : 'Saved locally — Sheets unreachable', !saveOk);
   pendingKPIs = {};
   setTimeout(() => {
     btn.textContent = `Apply to ${label} \u2192`;
